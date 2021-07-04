@@ -3,6 +3,86 @@
 #include <fstream>
 
 
+const int max_back_search_dist = 8192;
+const int max_match_length = 8;
+const int match_length_offset = 3;
+char* input_buf;
+
+class TextBuffer {
+  private:
+    char* text_buffer;
+    int buf_depth;
+    int buf_idx;
+    int buf_count;
+
+  public:
+    TextBuffer(int);
+    void add_chars(char*, int);
+    int search(char*, int);
+    void partial_search(char*, int, int);
+    char get_char(int);
+    int  get_count(void);
+    int  get_head_idx(void);
+    void dump_state(void);
+};
+
+TextBuffer::TextBuffer(int depth) {
+  this->buf_idx = 0;
+  this->buf_count = 0;
+  this->buf_depth = depth;
+  this->text_buffer = (char *) malloc(this->buf_depth * sizeof(char));
+}
+   
+void TextBuffer::add_chars(char *input, int length) {
+  for (int ii = 0; ii < length; ii++) {
+    this->text_buffer[this->buf_idx] = input[ii];
+    this->buf_idx = (this->buf_idx + 1) % this->buf_depth;
+    if ( this->buf_count < this->buf_depth ) {
+      this->buf_count++;
+    }
+  }
+}
+
+void TextBuffer::dump_state(void) {
+  printf("buf_depth = %d\n", this->buf_depth);
+  printf("buf_count = %d\n", this->buf_count);
+  printf("buf_idx   = %d\n", this->buf_idx);
+  for (int ii = this->buf_count; ii > 0; ii--) {
+    std::cout << this->text_buffer[(this->buf_count + this->buf_idx - ii) % this->buf_count];
+  }
+  std::cout << std::endl;
+};
+
+int TextBuffer::get_head_idx(void) {
+  if (this->buf_count == 0) {
+    return -1;
+  } else {
+    return (this->buf_count - this->buf_idx) % this->buf_depth;
+  }
+}
+
+int TextBuffer::search(char *pattern, int length) {
+  int chars_matched = 0;
+  for (int ii = 0; ii < this->buf_count; ii++) {
+    char c = this->text_buffer[(this->get_head_idx() + ii) % this->buf_depth];
+    printf("char c = %c\n", c);
+    if (c == pattern[chars_matched]) {
+      chars_matched++;
+    } else {
+      chars_matched = 0;
+    }
+    if (chars_matched == length) {
+      int distance = (this->buf_count - ii - 1);
+      return distance; 
+    }
+  }
+  return -1; // not found
+}
+
+    
+
+  
+
 int main(int argc, char* argv[]) {
   bool encodeMode;
   
@@ -40,31 +120,13 @@ int main(int argc, char* argv[]) {
   }
 
   char c = 0;
-  char* input_buf;
-  int buf_size = 5;
-  int buf_idx = 0;
-  bool buf_full = false;
-
-  input_buf = (char *) malloc(buf_size * sizeof(char));
- 
-  while (inputFile.get(c)) {
-    if (buf_full == false && buf_idx <= buf_size-1) {
-      buf_full = true;
-    }
-
-    input_buf[buf_idx] = c;
-    buf_idx = (buf_idx + 1) % buf_size;
-
-
-    for (int ii = 0; ii < buf_size and (ii <= buf_idx or buf_full); ii++) {
-      std::cout << input_buf[ii];
-    }
-    std::cout << std::endl;
-
-  }
-
+  TextBuffer* tb = new TextBuffer(16);
   
-
+  while (inputFile.get(c)) {
+    tb->add_chars(&c, 1);
+    tb->dump_state();
+    printf("search result = %d\n\n", tb->search("evan", 4));
+  }
 
   inputFile.close();
   outputFile.close();
