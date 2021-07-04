@@ -44,11 +44,19 @@ void TextBuffer::add_chars(char *input, int length) {
 }
 
 void TextBuffer::dump_state(void) {
-  printf("buf_depth = %d\n", this->buf_depth);
-  printf("buf_count = %d\n", this->buf_count);
-  printf("buf_idx   = %d\n", this->buf_idx);
+  //printf("buf_depth = %d\n", this->buf_depth);
+  //printf("buf_count = %d\n", this->buf_count);
+  //printf("buf_idx   = %d\n", this->buf_idx);
   for (int ii = this->buf_count; ii > 0; ii--) {
     std::cout << this->text_buffer[(this->buf_count + this->buf_idx - ii) % this->buf_count];
+  }
+  std::cout << std::endl;
+  for (int ii = this->buf_count; ii > 0; ii--) {
+    if (ii == this->buf_idx) {
+      std::cout << '^';
+    } else {
+      std::cout << ' ';
+    }
   }
   std::cout << std::endl;
 };
