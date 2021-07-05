@@ -3,10 +3,10 @@
 #include <fstream>
 
 
-const int max_back_search_dist = 8192;
-const int max_match_length = 8;
-const int match_length_offset = 3;
-char* input_buf;
+const int max_back_search_dist_bits = 4;
+const int match_length_bits = 3;
+const int min_match_length = 3;
+const char control_char = 0x24;
 
 class TextBuffer {
   private:
@@ -22,8 +22,10 @@ class TextBuffer {
     void partial_search(char*, int, int);
     char get_char(int);
     int  get_count(void);
+    int  get_depth(void);
     int  get_head_idx(void);
     void dump_state(void);
+    int  get_substring(char*, int, int);
 };
 
 TextBuffer::TextBuffer(int depth) {
@@ -47,16 +49,9 @@ void TextBuffer::dump_state(void) {
   //printf("buf_depth = %d\n", this->buf_depth);
   //printf("buf_count = %d\n", this->buf_count);
   //printf("buf_idx   = %d\n", this->buf_idx);
+  //printf("get_head_idx()   = %d\n", this->get_head_idx());
   for (int ii = this->buf_count; ii > 0; ii--) {
     std::cout << this->text_buffer[(this->buf_count + this->buf_idx - ii) % this->buf_count];
-  }
-  std::cout << std::endl;
-  for (int ii = this->buf_count; ii > 0; ii--) {
-    if (ii == this->buf_idx) {
-      std::cout << '^';
-    } else {
-      std::cout << ' ';
-    }
   }
   std::cout << std::endl;
 };
@@ -64,8 +59,11 @@ void TextBuffer::dump_state(void) {
 int TextBuffer::get_head_idx(void) {
   if (this->buf_count == 0) {
     return -1;
+  }
+  else if (this->buf_count < this->buf_depth) {
+    return 0;
   } else {
-    return (this->buf_count - this->buf_idx) % this->buf_depth;
+    return this->buf_idx;
   }
 }
 
@@ -73,22 +71,58 @@ int TextBuffer::search(char *pattern, int length) {
   int chars_matched = 0;
   for (int ii = 0; ii < this->buf_count; ii++) {
     char c = this->text_buffer[(this->get_head_idx() + ii) % this->buf_depth];
-    printf("char c = %c\n", c);
     if (c == pattern[chars_matched]) {
       chars_matched++;
     } else {
       chars_matched = 0;
     }
     if (chars_matched == length) {
-      int distance = (this->buf_count - ii - 1);
+      int distance = (this->buf_count - 1 - ii + length);
       return distance; 
     }
   }
   return -1; // not found
 }
 
-    
+int TextBuffer::get_substring(char* output, int virtual_index, int length) {
+  // FIXME protect against bad get_head_idx return code
+  int start_idx = (this->get_head_idx() + virtual_index) % this->buf_depth;
+  int stop_idx = (start_idx + length) % this->buf_depth;
 
+  if (length > this->buf_depth) {
+    throw std::invalid_argument("Length cannot exceed buffer depth");
+  }
+  if (this->buf_count < virtual_index+length) {
+    throw std::invalid_argument("Length cannot exceed buffer depth");
+  }
+
+    
+  //if (start_idx < stop_idx) {
+  //  printf("start_idx = %d\n", start_idx);
+  //  this->dump_state();
+  //  output = this->text_buffer[start_idx];
+  //}
+  //else {
+    for (int ii = 0; ii < length; ii++) {
+      output[ii] = this->text_buffer[(start_idx + ii ) % this->buf_depth];
+    }
+  //}
+}
+
+int TextBuffer::get_count(void) {
+  return this->buf_count;
+}
+
+int TextBuffer::get_depth(void) {
+  return this->buf_depth;
+}
+
+char TextBuffer::get_char(int virtual_index) {
+  return this->text_buffer[(this->get_head_idx() + virtual_index) % this->buf_depth];
+}
+
+
+char* create_jump(int jump_distance, int pattern_length) {
   
 
 int main(int argc, char* argv[]) {
@@ -127,19 +161,27 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  char c = 0;
-  TextBuffer* tb = new TextBuffer(16);
+  char c = '\0';
+  char* search_str = (char*) malloc(3 * sizeof(char));
+  TextBuffer* tb = new TextBuffer(1<<max_back_search_dist_bits);
   
   while (inputFile.get(c)) {
+    
     tb->add_chars(&c, 1);
-    tb->dump_state();
-    printf("search result = %d\n\n", tb->search("evan", 4));
+    if (tb->get_count() >= 3) {
+      tb->get_substring(search_str, tb->get_count()-3, 3);
+      int loc = tb->search(search_str, 3);
+      if (loc > 3) {
+        // generate a control token, write out to file
+        // move matched string into main buffer
+        printf("searching for %c%c%c...", search_str[0],search_str[1],search_str[2]);
+        printf("FOUND @ -%d\n", loc);
+      }
+    }
   }
 
   inputFile.close();
   outputFile.close();
-
-
 
   return 0;
 };
