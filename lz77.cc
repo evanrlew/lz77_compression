@@ -2,11 +2,10 @@
 #include <string>
 #include <fstream>
 
-
-const int max_back_search_dist_bits = 4;
-const int match_length_bits = 3;
-const int min_match_length = 3;
+const int  match_len = 4;
+const int  max_back_search_dist_bits = 5;
 const char control_char = 0x24;
+const int  control_bytes = 3;
 
 class TextBuffer {
   private:
@@ -77,7 +76,7 @@ int TextBuffer::search(char *pattern, int length) {
       chars_matched = 0;
     }
     if (chars_matched == length) {
-      int distance = (this->buf_count - 1 - ii + length);
+      int distance = (this->buf_count - 1 - ii);
       return distance; 
     }
   }
@@ -121,8 +120,14 @@ char TextBuffer::get_char(int virtual_index) {
   return this->text_buffer[(this->get_head_idx() + virtual_index) % this->buf_depth];
 }
 
+void create_jump_token(char* output, int jump_dist, int pattern_length) {
+  output[0] = control_char;
+  output[1] = '.';
+  output[2] = '.';
+  //output[1] = jump_dist;
+  //output[2] = pattern_length;
+}
 
-char* create_jump(int jump_distance, int pattern_length) {
   
 
 int main(int argc, char* argv[]) {
@@ -162,22 +167,41 @@ int main(int argc, char* argv[]) {
   }
 
   char c = '\0';
-  char* search_str = (char*) malloc(3 * sizeof(char));
-  TextBuffer* tb = new TextBuffer(1<<max_back_search_dist_bits);
+  char* search_str = (char*) malloc(match_len * sizeof(char));
+  int buf_size = (1<<max_back_search_dist_bits) + match_len;
+  TextBuffer* tb = new TextBuffer(buf_size);
   
   while (inputFile.get(c)) {
     
     tb->add_chars(&c, 1);
-    if (tb->get_count() >= 3) {
-      tb->get_substring(search_str, tb->get_count()-3, 3);
-      int loc = tb->search(search_str, 3);
-      if (loc > 3) {
-        // generate a control token, write out to file
-        // move matched string into main buffer
-        printf("searching for %c%c%c...", search_str[0],search_str[1],search_str[2]);
+    if (tb->get_count() >= match_len) {
+      tb->get_substring(search_str, tb->get_count()-match_len, match_len);
+      int loc = tb->search(search_str, match_len);
+      if (loc > match_len) {
+        char* control_token = (char *) malloc(match_len * sizeof(char));
+        printf("searching for %c%c%c%c...", search_str[0],search_str[1],search_str[2],search_str[3]);
         printf("FOUND @ -%d\n", loc);
+        create_jump_token(control_token, loc, match_len);
+        outputFile.write(control_token, control_bytes);
+        free(control_token);
+        for (int ii = 0; ii < match_len; ii++) {
+          if (inputFile.get(c)) { 
+            tb->add_chars(&c, 1);
+          }
+        }
+        
+      } else {
+        char c = tb->get_char(tb->get_count() - match_len);
+        outputFile.write(&c, 1);
       }
     }
+
+  }
+
+  // Pipe down
+  for (int ii = 0; ii < match_len; ii++) {
+    char c = tb->get_char(tb->get_count() - match_len + ii);
+    outputFile.write(&c, 1);
   }
 
   inputFile.close();
