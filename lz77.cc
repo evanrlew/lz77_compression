@@ -3,7 +3,7 @@
 #include <fstream>
 
 const int  match_len = 4;
-const int  max_back_search_dist_bits = 5;
+const int  max_back_search_dist_bits = 8;
 const char control_char = 0x24;
 const int  control_bytes = 3;
 
@@ -24,7 +24,7 @@ class TextBuffer {
     int  get_depth(void);
     int  get_head_idx(void);
     void dump_state(void);
-    int  get_substring(char*, int, int);
+    void  get_substring(char*, int, int);
 };
 
 TextBuffer::TextBuffer(int depth) {
@@ -83,10 +83,9 @@ int TextBuffer::search(char *pattern, int length) {
   return -1; // not found
 }
 
-int TextBuffer::get_substring(char* output, int virtual_index, int length) {
+void TextBuffer::get_substring(char* output, int virtual_index, int length) {
   // FIXME protect against bad get_head_idx return code
-  int start_idx = (this->get_head_idx() + virtual_index) % this->buf_depth;
-  int stop_idx = (start_idx + length) % this->buf_depth;
+  int start_idx = (this->buf_depth + this->get_head_idx() + virtual_index) % this->buf_depth;
 
   if (length > this->buf_depth) {
     throw std::invalid_argument("Length cannot exceed buffer depth");
@@ -122,10 +121,8 @@ char TextBuffer::get_char(int virtual_index) {
 
 void create_jump_token(char* output, int jump_dist, int pattern_length) {
   output[0] = control_char;
-  output[1] = '.';
-  output[2] = '.';
-  //output[1] = jump_dist;
-  //output[2] = pattern_length;
+  output[1] = jump_dist;
+  output[2] = pattern_length;
 }
 
   
@@ -166,43 +163,77 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  char c = '\0';
-  char* search_str = (char*) malloc(match_len * sizeof(char));
-  int buf_size = (1<<max_back_search_dist_bits) + match_len;
-  TextBuffer* tb = new TextBuffer(buf_size);
   
-  while (inputFile.get(c)) {
-    
-    tb->add_chars(&c, 1);
-    if (tb->get_count() >= match_len) {
-      tb->get_substring(search_str, tb->get_count()-match_len, match_len);
-      int loc = tb->search(search_str, match_len);
-      if (loc > match_len) {
-        char* control_token = (char *) malloc(match_len * sizeof(char));
-        printf("searching for %c%c%c%c...", search_str[0],search_str[1],search_str[2],search_str[3]);
-        printf("FOUND @ -%d\n", loc);
-        create_jump_token(control_token, loc, match_len);
-        outputFile.write(control_token, control_bytes);
-        free(control_token);
-        for (int ii = 0; ii < match_len; ii++) {
-          if (inputFile.get(c)) { 
-            tb->add_chars(&c, 1);
+  if (encodeMode) {
+    char c = '\0';
+    char* search_str = (char*) malloc(match_len * sizeof(char));
+    int buf_size = (1<<max_back_search_dist_bits) + match_len;
+    int pipe_down = 0;
+    TextBuffer* tb = new TextBuffer(buf_size);
+
+    while (inputFile.get(c)) {
+      tb->add_chars(&c, 1);
+      if (tb->get_count() >= match_len) {
+        pipe_down = match_len-1;
+        tb->get_substring(search_str, tb->get_count()-match_len, match_len);
+        int loc = tb->search(search_str, match_len);
+        if (loc > match_len) {
+          char* control_token = (char *) malloc(match_len * sizeof(char));
+          //printf("searching for %c%c%c%c...", search_str[0],search_str[1],search_str[2],search_str[3]);
+          //printf("FOUND @ -%d\n", loc);
+          create_jump_token(control_token, loc, match_len);
+          outputFile.write(control_token, control_bytes);
+          free(control_token);
+          for (int ii = 0; ii < match_len-1; ii++) {
+            if (inputFile.get(c)) { 
+              tb->add_chars(&c, 1);
+            } else {
+              pipe_down = ii;
+              break;
+            }
           }
+          
+        } else {
+          char c = tb->get_char(tb->get_count() - match_len);
+          outputFile.write(&c, 1);
         }
-        
-      } else {
-        char c = tb->get_char(tb->get_count() - match_len);
-        outputFile.write(&c, 1);
       }
+
     }
 
+    // Pipe down
+    for (int ii = pipe_down; ii > 0; ii--) {
+      char c = tb->get_char(tb->get_count() - ii);
+      outputFile.write(&c, 1);
+    }
+  } 
+  else { // decode mode
+    char c = '\0';
+    int buf_size = (1<<max_back_search_dist_bits);
+    char* search_str = (char*) malloc(match_len * sizeof(char));
+    TextBuffer* tb = new TextBuffer(buf_size);
+    while (inputFile.get(c)) {
+      if (c == control_char) {
+        inputFile.get(c);
+        int jump_dist = (int) c;
+        inputFile.get(c);
+        int pattern_length = (int) c;
+        //printf("Token found: jump_distance=%d, pattern_length=%d\n", jump_dist, pattern_length);
+        
+        tb->get_substring(search_str, tb->get_count()-jump_dist, pattern_length);
+        //printf("inserting for %c%c%c%c...\n", search_str[0],search_str[1],search_str[2],search_str[3]);
+        
+        tb->add_chars(search_str, pattern_length);
+        outputFile.write(search_str, pattern_length);
+      }
+      else {
+        tb->add_chars(&c, 1);
+        outputFile.write(&c, 1);
+      }
+    } 
   }
+    
 
-  // Pipe down
-  for (int ii = 0; ii < match_len; ii++) {
-    char c = tb->get_char(tb->get_count() - match_len + ii);
-    outputFile.write(&c, 1);
-  }
 
   inputFile.close();
   outputFile.close();
