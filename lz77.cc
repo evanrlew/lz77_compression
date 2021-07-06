@@ -91,7 +91,7 @@ void TextBuffer::get_substring(char* output, int virtual_index, int length) {
     throw std::invalid_argument("Length cannot exceed buffer depth");
   }
   if (this->buf_count < virtual_index+length) {
-    throw std::invalid_argument("Length cannot exceed buffer depth");
+    throw std::invalid_argument("virtual index + length cannot exceed buffer depth");
   }
 
     
@@ -119,7 +119,7 @@ char TextBuffer::get_char(int virtual_index) {
   return this->text_buffer[(this->get_head_idx() + virtual_index) % this->buf_depth];
 }
 
-void create_jump_token(char* output, int jump_dist, int pattern_length) {
+void create_jump_token(char* output, unsigned int jump_dist, unsigned int pattern_length) {
   output[0] = control_char;
   output[1] = jump_dist;
   output[2] = pattern_length;
@@ -181,7 +181,7 @@ int main(int argc, char* argv[]) {
           char* control_token = (char *) malloc(match_len * sizeof(char));
           //printf("searching for %c%c%c%c...", search_str[0],search_str[1],search_str[2],search_str[3]);
           //printf("FOUND @ -%d\n", loc);
-          create_jump_token(control_token, loc, match_len);
+          create_jump_token(control_token, loc-1, match_len);
           outputFile.write(control_token, control_bytes);
           free(control_token);
           for (int ii = 0; ii < match_len-1; ii++) {
@@ -215,12 +215,12 @@ int main(int argc, char* argv[]) {
     while (inputFile.get(c)) {
       if (c == control_char) {
         inputFile.get(c);
-        int jump_dist = (int) c;
+        unsigned char jump_dist =  c;
+       
         inputFile.get(c);
-        int pattern_length = (int) c;
-        //printf("Token found: jump_distance=%d, pattern_length=%d\n", jump_dist, pattern_length);
+        unsigned int pattern_length = (unsigned int) c;
         
-        tb->get_substring(search_str, tb->get_count()-jump_dist, pattern_length);
+        tb->get_substring(search_str, tb->get_count()-jump_dist-1, pattern_length);
         //printf("inserting for %c%c%c%c...\n", search_str[0],search_str[1],search_str[2],search_str[3]);
         
         tb->add_chars(search_str, pattern_length);
