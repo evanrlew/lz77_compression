@@ -207,6 +207,7 @@ int main(int argc, char* argv[]) {
       outputFile.write(&c, 1);
     }
   } 
+
   else { // decode mode
     char c = '\0';
     int buf_size = (1<<max_back_search_dist_bits);
