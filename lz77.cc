@@ -24,7 +24,7 @@ class TextBuffer {
     int  get_depth(void);
     int  get_head_idx(void);
     void dump_state(void);
-    void  get_substring(char*, int, int);
+    void  get_substring(char*, int, char);
 };
 
 TextBuffer::TextBuffer(int depth) {
@@ -83,7 +83,7 @@ int TextBuffer::search(char *pattern, int length) {
   return -1; // not found
 }
 
-void TextBuffer::get_substring(char* output, int virtual_index, int length) {
+void TextBuffer::get_substring(char* output, int virtual_index, char length) {
   // FIXME protect against bad get_head_idx return code
   int start_idx = (this->buf_depth + this->get_head_idx() + virtual_index) % this->buf_depth;
 
@@ -91,6 +91,10 @@ void TextBuffer::get_substring(char* output, int virtual_index, int length) {
     throw std::invalid_argument("Length cannot exceed buffer depth");
   }
   if (this->buf_count < virtual_index+length) {
+    printf("buf_count       = %d\n", buf_count);
+    printf("virtual_index   = %d\n", virtual_index);
+    printf("length          = %d\n", length);
+    fflush(stdout);
     throw std::invalid_argument("virtual index + length cannot exceed buffer depth");
   }
 
@@ -196,6 +200,10 @@ int main(int argc, char* argv[]) {
         } else {
           char c = tb->get_char(tb->get_count() - match_len);
           outputFile.write(&c, 1);
+          if (c == control_char) {
+            c = 0x01;
+            outputFile.write(&c, 1);
+          }
         }
       }
 
@@ -217,15 +225,23 @@ int main(int argc, char* argv[]) {
       if (c == control_char) {
         inputFile.get(c);
         unsigned char jump_dist =  c;
-       
-        inputFile.get(c);
-        unsigned int pattern_length = (unsigned int) c;
-        
-        tb->get_substring(search_str, tb->get_count()-jump_dist-1, pattern_length);
-        //printf("inserting for %c%c%c%c...\n", search_str[0],search_str[1],search_str[2],search_str[3]);
-        
-        tb->add_chars(search_str, pattern_length);
-        outputFile.write(search_str, pattern_length);
+
+        if (jump_dist == 0x01) {
+          c = control_char;
+          tb->add_chars(&c, 1);
+          outputFile.write(&c, 1);
+        } 
+        else { 
+         
+          inputFile.get(c);
+          unsigned char pattern_length =  c;
+         
+          tb->get_substring(search_str, tb->get_count()-jump_dist-1, pattern_length);
+          //printf("inserting for %c%c%c%c...\n", search_str[0],search_str[1],search_str[2],search_str[3]);
+          
+          tb->add_chars(search_str, pattern_length);
+          outputFile.write(search_str, pattern_length);
+        }
       }
       else {
         tb->add_chars(&c, 1);
