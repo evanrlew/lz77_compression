@@ -9,3 +9,6 @@ I have a working prototype (with bugs). Very naive implementation. Notable lacki
   * better (faster) search algo
   * cleaner ring buffer. Need a simple way to index from head and tail of the buffer.
   * Better string management. Current method is based on c strings (but worse) and is very fragile.
+
+2021 July 10:
+I updated the ring buffer api to support indexing from tail and head which cleans up the usage a lot. I also decided against using the cpp strings and I'm instead going to the thing about the ring buffer content as chunks of data.
