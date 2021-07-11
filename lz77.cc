@@ -7,15 +7,16 @@ const int  max_back_search_dist_bits = 8;
 const char control_char = 0x24;
 const int  control_bytes = 3;
 
-class TextBuffer {
+class RingBuffer {
   private:
     char* text_buffer;
     int buf_depth;
     int buf_idx;
     int buf_count;
+    int get_index(int);
 
   public:
-    TextBuffer(int);
+    RingBuffer(int);
     void add_chars(char*, int);
     int search(char*, int);
     void partial_search(char*, int, int);
@@ -24,17 +25,17 @@ class TextBuffer {
     int  get_depth(void);
     int  get_head_idx(void);
     void dump_state(void);
-    void  get_substring(char*, int, char);
+    void get_substring(char*, int, char);
 };
 
-TextBuffer::TextBuffer(int depth) {
+RingBuffer::RingBuffer(int depth) {
   this->buf_idx = 0;
   this->buf_count = 0;
   this->buf_depth = depth;
   this->text_buffer = (char *) malloc(this->buf_depth * sizeof(char));
 }
    
-void TextBuffer::add_chars(char *input, int length) {
+void RingBuffer::add_chars(char *input, int length) {
   for (int ii = 0; ii < length; ii++) {
     this->text_buffer[this->buf_idx] = input[ii];
     this->buf_idx = (this->buf_idx + 1) % this->buf_depth;
@@ -44,32 +45,48 @@ void TextBuffer::add_chars(char *input, int length) {
   }
 }
 
-void TextBuffer::dump_state(void) {
+void RingBuffer::dump_state(void) {
   //printf("buf_depth = %d\n", this->buf_depth);
   //printf("buf_count = %d\n", this->buf_count);
   //printf("buf_idx   = %d\n", this->buf_idx);
   //printf("get_head_idx()   = %d\n", this->get_head_idx());
   for (int ii = this->buf_count; ii > 0; ii--) {
-    std::cout << this->text_buffer[(this->buf_count + this->buf_idx - ii) % this->buf_count];
+    std::cout << this->get_char(ii);
   }
   std::cout << std::endl;
 };
 
-int TextBuffer::get_head_idx(void) {
-  if (this->buf_count == 0) {
-    return -1;
+int RingBuffer::get_index(int virtual_index) {
+  if ( (virtual_index > (this->buf_count-1)) || (virtual_index < -this->buf_count) ) {
+    throw std::invalid_argument("Virtual index is out of bounds");
   }
-  else if (this->buf_count < this->buf_depth) {
-    return 0;
-  } else {
-    return this->buf_idx;
+
+  if (virtual_index >= 0) {
+    if (this->buf_count < this->buf_depth) { // positive means index from the head
+      return virtual_index;  
+    } else {
+      return (this->buf_idx + virtual_index) % this->buf_depth;
+    }
+  } else { // negative means index from the tail
+    if (this->buf_count < this->buf_depth) {
+      return this->buf_idx + virtual_index;
+    } else {
+      return (this->buf_depth + this->buf_idx + virtual_index) % this->buf_depth;
+    }
   }
 }
 
-int TextBuffer::search(char *pattern, int length) {
+  
+    
+
+int RingBuffer::get_head_idx(void) {
+  return this->get_index(0);
+}
+
+int RingBuffer::search(char *pattern, int length) {
   int chars_matched = 0;
   for (int ii = 0; ii < this->buf_count; ii++) {
-    char c = this->text_buffer[(this->get_head_idx() + ii) % this->buf_depth];
+    char c = this->get_char(ii);
     if (c == pattern[chars_matched]) {
       chars_matched++;
     } else {
@@ -83,9 +100,7 @@ int TextBuffer::search(char *pattern, int length) {
   return -1; // not found
 }
 
-void TextBuffer::get_substring(char* output, int virtual_index, char length) {
-  // FIXME protect against bad get_head_idx return code
-  int start_idx = (this->buf_depth + this->get_head_idx() + virtual_index) % this->buf_depth;
+void RingBuffer::get_substring(char* output, int virtual_index, char length) {
 
   if (length > this->buf_depth) {
     throw std::invalid_argument("Length cannot exceed buffer depth");
@@ -98,29 +113,21 @@ void TextBuffer::get_substring(char* output, int virtual_index, char length) {
     throw std::invalid_argument("virtual index + length cannot exceed buffer depth");
   }
 
-    
-  //if (start_idx < stop_idx) {
-  //  printf("start_idx = %d\n", start_idx);
-  //  this->dump_state();
-  //  output = this->text_buffer[start_idx];
-  //}
-  //else {
-    for (int ii = 0; ii < length; ii++) {
-      output[ii] = this->text_buffer[(start_idx + ii ) % this->buf_depth];
-    }
-  //}
+  for (int ii = 0; ii < length; ii++) {
+    output[ii] = this->get_char(virtual_index + ii);
+  }
 }
 
-int TextBuffer::get_count(void) {
+int RingBuffer::get_count(void) {
   return this->buf_count;
 }
 
-int TextBuffer::get_depth(void) {
+int RingBuffer::get_depth(void) {
   return this->buf_depth;
 }
 
-char TextBuffer::get_char(int virtual_index) {
-  return this->text_buffer[(this->get_head_idx() + virtual_index) % this->buf_depth];
+char RingBuffer::get_char(int virtual_index) {
+  return this->text_buffer[this->get_index(virtual_index)];
 }
 
 void create_jump_token(char* output, unsigned int jump_dist, unsigned int pattern_length) {
@@ -173,13 +180,13 @@ int main(int argc, char* argv[]) {
     char* search_str = (char*) malloc(match_len * sizeof(char));
     int buf_size = (1<<max_back_search_dist_bits) + match_len;
     int pipe_down = 0;
-    TextBuffer* tb = new TextBuffer(buf_size);
+    RingBuffer* tb = new RingBuffer(buf_size);
 
     while (inputFile.get(c)) {
       tb->add_chars(&c, 1);
       if (tb->get_count() >= match_len) {
         pipe_down = match_len-1;
-        tb->get_substring(search_str, tb->get_count()-match_len, match_len);
+        tb->get_substring(search_str, -match_len, match_len);
         int loc = tb->search(search_str, match_len);
         if (loc > match_len) {
           char* control_token = (char *) malloc(match_len * sizeof(char));
@@ -220,7 +227,7 @@ int main(int argc, char* argv[]) {
     char c = '\0';
     int buf_size = (1<<max_back_search_dist_bits);
     char* search_str = (char*) malloc(match_len * sizeof(char));
-    TextBuffer* tb = new TextBuffer(buf_size);
+    RingBuffer* tb = new RingBuffer(buf_size);
     while (inputFile.get(c)) {
       if (c == control_char) {
         inputFile.get(c);
@@ -236,7 +243,7 @@ int main(int argc, char* argv[]) {
           inputFile.get(c);
           unsigned char pattern_length =  c;
          
-          tb->get_substring(search_str, tb->get_count()-jump_dist-1, pattern_length);
+          tb->get_substring(search_str, -jump_dist-1, pattern_length);
           //printf("inserting for %c%c%c%c...\n", search_str[0],search_str[1],search_str[2],search_str[3]);
           
           tb->add_chars(search_str, pattern_length);
