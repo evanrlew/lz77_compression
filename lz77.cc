@@ -4,9 +4,16 @@
 
 const int  min_match_len = 4;
 const int  match_bits = 4;
+const int  max_match_len = (min_match_len+(1<<match_bits));
 const int  jump_dist_bits = 8;
 const char control_char = 0x24;
 const int  control_bytes = 3;
+
+class RingBufferMatchResult {
+  public:
+    int jump_dist;
+    int length;
+};
 
 class RingBuffer {
   private:
@@ -19,7 +26,8 @@ class RingBuffer {
   public:
     RingBuffer(int);
     void add_chars(char*, int);
-    int search(char*, int);
+    int search(RingBufferMatchResult*, char*, int);
+    int partial_search(RingBufferMatchResult*, char*, int, int);
     void partial_search(char*, int, int);
     char get_char(int);
     int  get_count(void);
@@ -75,7 +83,7 @@ int RingBuffer::get_index(int virtual_index) {
   }
 }
 
-int RingBuffer::search(char *pattern, int length) {
+int RingBuffer::search(RingBufferMatchResult* mr, char *pattern, int length) {
   int chars_matched = 0;
   for (int ii = 0; ii < this->buf_count; ii++) {
     char c = this->get_char(ii);
@@ -85,14 +93,39 @@ int RingBuffer::search(char *pattern, int length) {
       chars_matched = 0;
     }
     if (chars_matched == length) {
-      int distance = (this->buf_count - 1 - ii);
-      return distance; 
+      mr->jump_dist = (this->buf_count - 1 - ii);
+      mr->length = length;
+      return 0; 
     }
   }
   return -1; // not found
 }
 
-
+int RingBuffer::partial_search(RingBufferMatchResult* mr, char *pattern, int length, int min_match_length) {
+  int best_match_pos = -1;
+  int best_match_len = -1;
+  int chars_matched = 0;
+  for (int ii = 0; ii < this->buf_count; ii++) {
+    char c = this->get_char(ii);
+    if (chars_matched < length && c == pattern[chars_matched]) {
+      chars_matched++;
+      if (chars_matched >= min_match_length && chars_matched > best_match_len) {
+        best_match_pos = (this->buf_count - 1 - ii);
+        best_match_len = chars_matched;
+      }
+    } else {
+      chars_matched = 0;
+    }
+  }
+  if (best_match_pos > -1) {
+    mr->jump_dist = best_match_pos;
+    mr->length = best_match_len;
+    return 0; 
+  } else {
+    return -1; // not found
+  }
+}
+  
 
 void RingBuffer::get_substring(char* output, int virtual_index, char length) {
 
@@ -181,26 +214,28 @@ int main(int argc, char* argv[]) {
   
   if (encodeMode) {
     char c = '\0';
-    char* search_str = (char*) malloc(min_match_len * sizeof(char));
+    char* search_str = (char*) malloc(max_match_len * sizeof(char));
     char* control_token;
     int buf_size = (1<<jump_dist_bits) + min_match_len;
     int pipe_down = 0;
     RingBuffer* tb = new RingBuffer(buf_size);
+    RingBufferMatchResult* mr = new RingBufferMatchResult();
 
     while (inputFile.get(c)) {
       tb->add_chars(&c, 1);
       if (tb->get_count() >= min_match_len) {
         pipe_down = min_match_len-1;
         tb->get_substring(search_str, -min_match_len, min_match_len);
-        int loc = tb->search(search_str, min_match_len);
-        if (loc > min_match_len) {
-          control_token = (char *) malloc(min_match_len * sizeof(char));
+        int ret = tb->partial_search(mr, search_str, min_match_len, min_match_len);
+        //int ret = tb->search(mr, search_str, min_match_len);
+        if (ret == 0 && mr->jump_dist > min_match_len ) { // FIXME this second check is due to back design
+          control_token = (char *) malloc(control_bytes * sizeof(char));
           //printf("searching for %c%c%c%c...", search_str[0],search_str[1],search_str[2],search_str[3]);
           //printf("FOUND @ -%d\n", loc);
-          create_jump_token(control_token, loc-1, min_match_len);
+          create_jump_token(control_token, mr->jump_dist-1, mr->length-min_match_len);
           outputFile.write(control_token, control_bytes);
           free(control_token);
-          for (int ii = 0; ii < min_match_len-1; ii++) {
+          for (int ii = 0; ii < mr->length-1; ii++) {
             if (inputFile.get(c)) { 
               tb->add_chars(&c, 1);
             } else {
@@ -235,7 +270,7 @@ int main(int argc, char* argv[]) {
   else { // decode mode
     char c = '\0';
     int buf_size = (1<<jump_dist_bits);
-    char* search_str = (char*) malloc(min_match_len * sizeof(char));
+    char* search_str = (char*) malloc(max_match_len * sizeof(char));
     RingBuffer* tb = new RingBuffer(buf_size);
     while (inputFile.get(c)) {
       if (c == control_char) {
@@ -246,7 +281,7 @@ int main(int argc, char* argv[]) {
 
         
         int jump_dist = ct0 << (jump_dist_bits-8) | (ct1 >> match_bits);
-        int match_len = ct1 & ((1<<match_bits)-1);
+        int match_len = (ct1 & ((1<<match_bits)-1)) + min_match_len;
 
         if (jump_dist == 0x01) {
           c = control_char;
@@ -255,7 +290,7 @@ int main(int argc, char* argv[]) {
         } 
         else { 
          
-          tb->get_substring(search_str, -jump_dist-1, match_len);
+          tb->get_substring(search_str, -(jump_dist+1), match_len);
           //printf("inserting for %c%c%c%c...\n", search_str[0],search_str[1],search_str[2],search_str[3]);
           
           tb->add_chars(search_str, match_len);
