@@ -2,8 +2,9 @@
 #include <string>
 #include <fstream>
 
-const int  match_len = 4;
-const int  max_back_search_dist_bits = 8;
+const int  min_match_len = 4;
+const int  match_bits = 4;
+const int  jump_dist_bits = 8;
 const char control_char = 0x24;
 const int  control_bytes = 3;
 
@@ -23,7 +24,6 @@ class RingBuffer {
     char get_char(int);
     int  get_count(void);
     int  get_depth(void);
-    int  get_head_idx(void);
     void dump_state(void);
     void get_substring(char*, int, char);
 };
@@ -49,7 +49,6 @@ void RingBuffer::dump_state(void) {
   //printf("buf_depth = %d\n", this->buf_depth);
   //printf("buf_count = %d\n", this->buf_count);
   //printf("buf_idx   = %d\n", this->buf_idx);
-  //printf("get_head_idx()   = %d\n", this->get_head_idx());
   for (int ii = this->buf_count; ii > 0; ii--) {
     std::cout << this->get_char(ii);
   }
@@ -76,13 +75,6 @@ int RingBuffer::get_index(int virtual_index) {
   }
 }
 
-  
-    
-
-int RingBuffer::get_head_idx(void) {
-  return this->get_index(0);
-}
-
 int RingBuffer::search(char *pattern, int length) {
   int chars_matched = 0;
   for (int ii = 0; ii < this->buf_count; ii++) {
@@ -99,6 +91,8 @@ int RingBuffer::search(char *pattern, int length) {
   }
   return -1; // not found
 }
+
+
 
 void RingBuffer::get_substring(char* output, int virtual_index, char length) {
 
@@ -132,8 +126,18 @@ char RingBuffer::get_char(int virtual_index) {
 
 void create_jump_token(char* output, unsigned int jump_dist, unsigned int pattern_length) {
   output[0] = control_char;
-  output[1] = jump_dist;
-  output[2] = pattern_length;
+
+  if (jump_dist > 1<<jump_dist_bits) {
+    throw std::invalid_argument("jump dist doesn't fit in jump_dist_bits");
+  }
+
+  if (pattern_length > 1<<match_bits) {
+    throw std::invalid_argument("pattern_length doesn't fit in match_bits");
+  }
+
+  output[1] = jump_dist >> (jump_dist_bits-8);
+  output[2] = (jump_dist & ((1<<(jump_dist_bits-8))-1)) << match_bits;
+  output[2] = output[2] | pattern_length;
 }
 
   
@@ -177,25 +181,26 @@ int main(int argc, char* argv[]) {
   
   if (encodeMode) {
     char c = '\0';
-    char* search_str = (char*) malloc(match_len * sizeof(char));
-    int buf_size = (1<<max_back_search_dist_bits) + match_len;
+    char* search_str = (char*) malloc(min_match_len * sizeof(char));
+    char* control_token;
+    int buf_size = (1<<jump_dist_bits) + min_match_len;
     int pipe_down = 0;
     RingBuffer* tb = new RingBuffer(buf_size);
 
     while (inputFile.get(c)) {
       tb->add_chars(&c, 1);
-      if (tb->get_count() >= match_len) {
-        pipe_down = match_len-1;
-        tb->get_substring(search_str, -match_len, match_len);
-        int loc = tb->search(search_str, match_len);
-        if (loc > match_len) {
-          char* control_token = (char *) malloc(match_len * sizeof(char));
+      if (tb->get_count() >= min_match_len) {
+        pipe_down = min_match_len-1;
+        tb->get_substring(search_str, -min_match_len, min_match_len);
+        int loc = tb->search(search_str, min_match_len);
+        if (loc > min_match_len) {
+          control_token = (char *) malloc(min_match_len * sizeof(char));
           //printf("searching for %c%c%c%c...", search_str[0],search_str[1],search_str[2],search_str[3]);
           //printf("FOUND @ -%d\n", loc);
-          create_jump_token(control_token, loc-1, match_len);
+          create_jump_token(control_token, loc-1, min_match_len);
           outputFile.write(control_token, control_bytes);
           free(control_token);
-          for (int ii = 0; ii < match_len-1; ii++) {
+          for (int ii = 0; ii < min_match_len-1; ii++) {
             if (inputFile.get(c)) { 
               tb->add_chars(&c, 1);
             } else {
@@ -205,10 +210,14 @@ int main(int argc, char* argv[]) {
           }
           
         } else {
-          char c = tb->get_char(tb->get_count() - match_len);
-          outputFile.write(&c, 1);
+          char c = tb->get_char(tb->get_count() - min_match_len);
           if (c == control_char) {
-            c = 0x01;
+            control_token = (char *) malloc(control_bytes * sizeof(char));
+            create_jump_token(control_token, 1, 0);
+            outputFile.write(control_token, control_bytes);
+            free(control_token);
+          } 
+          else {
             outputFile.write(&c, 1);
           }
         }
@@ -225,13 +234,19 @@ int main(int argc, char* argv[]) {
 
   else { // decode mode
     char c = '\0';
-    int buf_size = (1<<max_back_search_dist_bits);
-    char* search_str = (char*) malloc(match_len * sizeof(char));
+    int buf_size = (1<<jump_dist_bits);
+    char* search_str = (char*) malloc(min_match_len * sizeof(char));
     RingBuffer* tb = new RingBuffer(buf_size);
     while (inputFile.get(c)) {
       if (c == control_char) {
         inputFile.get(c);
-        unsigned char jump_dist =  c;
+        unsigned char ct0 =  c;
+        inputFile.get(c);
+        unsigned char ct1 =  c;
+
+        
+        int jump_dist = ct0 << (jump_dist_bits-8) | (ct1 >> match_bits);
+        int match_len = ct1 & ((1<<match_bits)-1);
 
         if (jump_dist == 0x01) {
           c = control_char;
@@ -240,14 +255,11 @@ int main(int argc, char* argv[]) {
         } 
         else { 
          
-          inputFile.get(c);
-          unsigned char pattern_length =  c;
-         
-          tb->get_substring(search_str, -jump_dist-1, pattern_length);
+          tb->get_substring(search_str, -jump_dist-1, match_len);
           //printf("inserting for %c%c%c%c...\n", search_str[0],search_str[1],search_str[2],search_str[3]);
           
-          tb->add_chars(search_str, pattern_length);
-          outputFile.write(search_str, pattern_length);
+          tb->add_chars(search_str, match_len);
+          outputFile.write(search_str, match_len);
         }
       }
       else {
