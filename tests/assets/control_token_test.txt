@@ -1,1 +1,2 @@
 hello this is a test of the $ control token test test
+hello this is a test of the $ control token test test

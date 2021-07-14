@@ -4,8 +4,8 @@
 
 const int  min_match_len = 4;
 const int  match_bits = 4;
-const int  max_match_len = (min_match_len+(1<<match_bits));
-const int  jump_dist_bits = 8;
+const int  max_match_len = (min_match_len+(1<<match_bits))-1;
+const int  jump_dist_bits = 12;
 const char control_char = 0x24;
 const int  control_bytes = 3;
 
@@ -57,7 +57,7 @@ void RingBuffer::dump_state(void) {
   //printf("buf_depth = %d\n", this->buf_depth);
   //printf("buf_count = %d\n", this->buf_count);
   //printf("buf_idx   = %d\n", this->buf_idx);
-  for (int ii = this->buf_count; ii > 0; ii--) {
+  for (int ii = 0; ii < this->get_count(); ii++) {
     std::cout << this->get_char(ii);
   }
   std::cout << std::endl;
@@ -110,7 +110,7 @@ int RingBuffer::partial_search(RingBufferMatchResult* mr, char *pattern, int len
     if (chars_matched < length && c == pattern[chars_matched]) {
       chars_matched++;
       if (chars_matched >= min_match_length && chars_matched > best_match_len) {
-        best_match_pos = (this->buf_count - 1 - ii);
+        best_match_pos = (this->buf_count - 1 - ii + chars_matched);
         best_match_len = chars_matched;
       }
     } else {
@@ -173,7 +173,6 @@ void create_jump_token(char* output, unsigned int jump_dist, unsigned int patter
   output[2] = output[2] | pattern_length;
 }
 
-  
 
 int main(int argc, char* argv[]) {
   bool encodeMode;
@@ -213,56 +212,95 @@ int main(int argc, char* argv[]) {
 
   
   if (encodeMode) {
+    bool encodingFinished = false;
     char c = '\0';
     char* search_str = (char*) malloc(max_match_len * sizeof(char));
-    char* control_token;
-    int buf_size = (1<<jump_dist_bits) + min_match_len;
+    char* control_token = (char *) malloc(control_bytes * sizeof(char));
     int pipe_down = 0;
-    RingBuffer* tb = new RingBuffer(buf_size);
+    RingBuffer* tb = new RingBuffer(1<<jump_dist_bits);
+    RingBuffer* ib = new RingBuffer(max_match_len);
     RingBufferMatchResult* mr = new RingBufferMatchResult();
 
-    while (inputFile.get(c)) {
-      tb->add_chars(&c, 1);
-      if (tb->get_count() >= min_match_len) {
-        pipe_down = min_match_len-1;
-        tb->get_substring(search_str, -min_match_len, min_match_len);
-        int ret = tb->partial_search(mr, search_str, min_match_len, min_match_len);
-        //int ret = tb->search(mr, search_str, min_match_len);
-        if (ret == 0 && mr->jump_dist > min_match_len ) { // FIXME this second check is due to back design
-          control_token = (char *) malloc(control_bytes * sizeof(char));
-          //printf("searching for %c%c%c%c...", search_str[0],search_str[1],search_str[2],search_str[3]);
-          //printf("FOUND @ -%d\n", loc);
+    while (!encodingFinished) {
+
+      if (tb->get_count() >= max_match_len) { 
+        pipe_down = max_match_len-1;
+        ib->get_substring(search_str, 0, max_match_len);
+        int ret = tb->partial_search(mr, search_str, max_match_len, min_match_len);
+        if (ret == 0) { // FIXME this second check is due to back design
+          //printf("mr->jump_dist = %d\n", mr->jump_dist);
+          //printf("mr->length = %d\n", mr->length);
+          //printf("tb dump:");
+          //tb->dump_state();
+          //printf("ib dump:");
+          //ib->dump_state();
+          //fflush(stdout);
           create_jump_token(control_token, mr->jump_dist-1, mr->length-min_match_len);
           outputFile.write(control_token, control_bytes);
-          free(control_token);
-          for (int ii = 0; ii < mr->length-1; ii++) {
+          for (int ii = 0; ii < mr->length; ii++) {
             if (inputFile.get(c)) { 
-              tb->add_chars(&c, 1);
+              char pop0 = ib->get_char(0);
+              tb->add_chars(&pop0, 1);
+              ib->add_chars(&c, 1);
             } else {
-              pipe_down = ii;
+              pipe_down = ib->get_count() + ii - mr->length;
+              encodingFinished = true;
               break;
             }
           }
           
         } else {
-          char c = tb->get_char(tb->get_count() - min_match_len);
-          if (c == control_char) {
+          if (ib->get_count() == ib->get_depth()) {
+            char pop0 = ib->get_char(0);
+            tb->add_chars(&pop0, 1);
+            if (pop0 == control_char) {
+              control_token = (char *) malloc(control_bytes * sizeof(char));
+              create_jump_token(control_token, 1, 0);
+              outputFile.write(control_token, control_bytes);
+              free(control_token);
+            } 
+            else {
+              outputFile.write(&pop0, 1);
+            }
+          }
+
+          if (inputFile.get(c)) { 
+            ib->add_chars(&c, 1);
+          } else {
+            encodingFinished = true;
+            break;
+          }
+
+        }
+      } else {
+ 
+        if (ib->get_count() == ib->get_depth()) {
+          char pop0 = ib->get_char(0);
+          tb->add_chars(&pop0, 1);
+          if (pop0 == control_char) {
             control_token = (char *) malloc(control_bytes * sizeof(char));
             create_jump_token(control_token, 1, 0);
             outputFile.write(control_token, control_bytes);
             free(control_token);
           } 
           else {
-            outputFile.write(&c, 1);
+            outputFile.write(&pop0, 1);
           }
         }
+
+        if (inputFile.get(c)) { 
+          ib->add_chars(&c, 1);
+        } else {
+          encodingFinished = true;
+        }
+
       }
 
     }
 
     // Pipe down
-    for (int ii = pipe_down; ii > 0; ii--) {
-      char c = tb->get_char(tb->get_count() - ii);
+    for (int ii = -pipe_down; ii < 0; ii++) {
+      char c = ib->get_char(ii);
       outputFile.write(&c, 1);
     }
   } 
