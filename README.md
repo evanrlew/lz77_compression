@@ -1,16 +1,16 @@
-#A LZ compression program. It seems to work well.
+# A LZ compression program. It seems to work well.
 
-##Build
+## Build
 make
 
-##Test:
+## Test:
 ./test.sh
 
 
 
 
 
-##Progress Notes
+## Progress Notes
 Struggling to find a nice (fast) way to back search the text. Ultimately I would like to explore speed ups using bloom filters and boyer-moore search, but for now I'm going to start with a brute force search. Currently things are complicated because of:
   * ring buffer
   * search greediness
